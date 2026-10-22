@@ -1,0 +1,54 @@
+# NEXA on Render — one-click Blueprint.
+#
+# 1. Push this repository to GitHub.
+# 2. Render Dashboard → New → Blueprint → select the repository.
+# 3. Set GEMINI_API_KEY (https://aistudio.google.com/apikey) when prompted.
+# 4. Apply. Render provisions PostgreSQL, builds the Docker image, runs
+#    migrations, seeds the demo workspace, and serves the app over HTTPS.
+#
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: nexa
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SESSION_TTL_DAYS
+        value: "30"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nexa-db
+          property: connectionString
+
+      # Demo data (fictional users + messages). Set to "false" and remove the
+      # seeded accounts before using this deployment for real conversations.
+      - key: SEED_DEMO
+        value: "true"
+
+      # AI. Gemini has a free tier. Without a key the UI stays honest and
+      # returns 503 AI_UNAVAILABLE instead of inventing answers.
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+
+      # Local disk is ephemeral on Render's free plan. Uploaded files survive
+      # while the instance is warm but not across redeploys. For durable
+      # uploads set STORAGE_DRIVER=s3 plus the S3_* variables below.
+      - key: STORAGE_DRIVER
+        value: local
+      - key: MAX_UPLOAD_MB
+        value: "25"
+
+databases:
+  - name: nexa-db
+    plan: free
+    databaseName: nexa
+    user: nexa

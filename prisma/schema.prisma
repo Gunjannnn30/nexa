@@ -1,0 +1,619 @@
+// NEXA database schema
+// PostgreSQL + Prisma. All message content is stored server-side.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+  ROOM
+  BRANCH
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MessageType {
+  TEXT
+  SYSTEM
+  POLL
+}
+
+enum AttachmentKind {
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+}
+
+enum WorkspaceItemType {
+  TASK
+  CHECKLIST
+  NOTE
+  PLAN
+  DECISION
+}
+
+enum WorkspaceItemStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+enum AiSummaryKind {
+  UNREAD
+  RANGE
+  GROUP
+  THREAD
+  DIGEST
+  ROOM
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  REVOKED
+  EXPIRED
+}
+
+enum NotificationType {
+  MENTION
+  GROUP_INVITE
+  TASK_ASSIGNED
+  AI_DIGEST
+  SYSTEM
+}
+
+enum ContextCardType {
+  TASK
+  DATE
+  DECISION
+  FILE
+  LINK
+}
+
+enum MemorySource {
+  USER
+  AI
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  username    String   @unique
+  name        String
+  passwordHash String
+  avatarUrl   String?
+  bio         String?
+  statusText  String?
+  lastSeenAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  settings             UserSettings?
+  sessions             Session[]
+  contacts             Contact[]          @relation("ContactOwner")
+  contactOf            Contact[]          @relation("ContactTarget")
+  blocks               Block[]            @relation("Blocker")
+  blockedBy            Block[]            @relation("Blocked")
+  reports              Report[]           @relation("Reporter")
+  reportsAgainst       Report[]           @relation("Reported")
+  conversationMembers  ConversationMember[]
+  invitedMembers       ConversationMember[] @relation("MemberInviter")
+  createdConversations Conversation[]     @relation("ConversationCreator")
+  messages             Message[]
+  messageReceipts      MessageReceipt[]
+  reactions            Reaction[]
+  bookmarks            Bookmark[]
+  pins                 ConversationPin[]
+  attachments          Attachment[]
+  polls                Poll[]
+  pollVotes            PollVote[]
+  groupInvitesSent     GroupInvite[]      @relation("InviteSender")
+  groupInvitesReceived GroupInvite[]      @relation("InviteRecipient")
+  summaries            AiSummary[]
+  memories             PersonalMemory[]
+  branchesStarted      Branch[]           @relation("BranchCreator")
+  workspacesCreated    Workspace[]        @relation("WorkspaceCreator")
+  workspaceItemsCreated WorkspaceItem[]   @relation("WorkspaceItemCreator")
+  workspaceItemsAssigned WorkspaceItem[]  @relation("WorkspaceItemAssignee")
+  notifications        Notification[]    @relation("NotificationRecipient")
+  notificationsActed   Notification[]    @relation("NotificationActor")
+  mentions             MessageMention[]
+
+  @@index([username])
+  @@index([lastSeenAt])
+}
+
+model UserSettings {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  theme                String    @default("system") // light | dark | system
+  language             String    @default("en")
+  readReceipts         Boolean   @default(true)
+  lastSeenVisible      Boolean   @default(true)
+  discoverable         Boolean   @default(true)
+  notificationsEnabled Boolean   @default(true)
+  soundEnabled         Boolean   @default(true)
+  messagePreview       Boolean   @default(true)
+  digestEnabled        Boolean   @default(false)
+  digestHour           Int       @default(9)
+  aiMemoryEnabled      Boolean   @default(false)
+  aiMemoryConsentAt    DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Contact {
+  id            String   @id @default(cuid())
+  ownerId       String
+  contactUserId String
+  nickname      String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  owner       User @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  contactUser User @relation("ContactTarget", fields: [contactUserId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, contactUserId])
+  @@index([contactUserId])
+}
+
+model Block {
+  id         String   @id @default(cuid())
+  blockerId  String
+  blockedId  String
+  createdAt  DateTime @default(now())
+
+  blocker User @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+model Report {
+  id           String       @id @default(cuid())
+  reporterId   String
+  reportedId   String
+  reason       String
+  details      String?
+  status       ReportStatus @default(OPEN)
+  createdAt    DateTime     @default(now())
+
+  reporter User @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported User @relation("Reported", fields: [reportedId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}
+
+model Conversation {
+  id           String           @id @default(cuid())
+  type         ConversationType
+  title        String?
+  description  String?
+  avatarUrl    String?
+  directKey    String?          @unique
+  createdById  String?
+  isTemporary  Boolean          @default(false)
+  expiresAt    DateTime?
+  lastMessageAt DateTime        @default(now())
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  creator    User?                @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  members    ConversationMember[]
+  messages   Message[]
+  pins       ConversationPin[]
+  invites    GroupInvite[]
+  workspace  Workspace?
+  summaries  AiSummary[]
+  branches   Branch[]            @relation("SourceConversation")
+  branchInfo Branch?             @relation("BranchConversation")
+  notifications Notification[]
+
+  @@index([lastMessageAt])
+  @@index([type])
+}
+
+model ConversationMember {
+  id               String     @id @default(cuid())
+  conversationId   String
+  userId           String
+  role             MemberRole @default(MEMBER)
+  joinedAt         DateTime   @default(now())
+  lastReadAt       DateTime?
+  lastDeliveredAt  DateTime?
+  mutedUntil       DateTime?
+  isArchived       Boolean    @default(false)
+  isFavorite       Boolean    @default(false)
+  notificationLevel String    @default("ALL") // ALL | MENTIONS | NONE
+  invitedById      String?
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  invitedBy    User?        @relation("MemberInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  @@unique([conversationId, userId])
+  @@index([userId, isArchived])
+  @@index([conversationId])
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  senderId       String
+  clientId       String?
+  body           String      @db.Text
+  type           MessageType @default(TEXT)
+  replyToId      String?
+  forwardedFromId String?
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  conversation  Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender        User               @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  replyTo       Message?           @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies       Message[]          @relation("MessageReplies")
+  forwardedFrom Message?           @relation("ForwardedMessages", fields: [forwardedFromId], references: [id], onDelete: SetNull)
+  forwardedTo   Message[]          @relation("ForwardedMessages")
+  attachments   Attachment[]
+  reactions     Reaction[]
+  receipts      MessageReceipt[]
+  bookmarks     Bookmark[]
+  pins          ConversationPin[]
+  poll          Poll?
+  mentions      MessageMention[]
+  contextCards  MessageContext[]
+  workspaceItems WorkspaceItem[]
+  branches      Branch[]
+  aiEvidence    AiEvidence[]
+  memories      PersonalMemory[]
+  embedding     MessageEmbedding?
+
+  @@unique([conversationId, clientId])
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+model MessageReceipt {
+  id          String    @id @default(cuid())
+  messageId   String
+  userId      String
+  deliveredAt DateTime?
+  readAt      DateTime?
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+}
+
+model Attachment {
+  id           String         @id @default(cuid())
+  storageKey   String         @unique
+  originalName String
+  mimeType     String
+  size         Int
+  kind         AttachmentKind
+  width        Int?
+  height       Int?
+  durationMs   Int?
+  messageId    String?
+  uploaderId   String
+  createdAt    DateTime       @default(now())
+
+  message  Message? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  uploader User     @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([uploaderId])
+  @@index([createdAt])
+}
+
+model Reaction {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId, emoji])
+  @@index([userId])
+}
+
+model Bookmark {
+  id        String   @id @default(cuid())
+  userId    String
+  messageId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, messageId])
+  @@index([userId, createdAt])
+}
+
+model ConversationPin {
+  id             String   @id @default(cuid())
+  conversationId String
+  messageId      String
+  pinnedById     String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message      Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  pinnedBy     User         @relation(fields: [pinnedById], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, messageId])
+  @@index([conversationId, createdAt])
+}
+
+model MessageContext {
+  id        String          @id @default(cuid())
+  messageId String
+  type      ContextCardType
+  title     String
+  data      Json?
+  createdAt DateTime        @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+model Poll {
+  id            String    @id @default(cuid())
+  messageId     String    @unique
+  question      String
+  allowsMultiple Boolean  @default(false)
+  closesAt      DateTime?
+  createdById   String
+  createdAt     DateTime  @default(now())
+
+  message Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  creator User         @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  options PollOption[]
+}
+
+model PollOption {
+  id     String @id @default(cuid())
+  pollId String
+  label  String
+  order  Int    @default(0)
+
+  poll  Poll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes PollVote[]
+
+  @@index([pollId])
+}
+
+model PollVote {
+  id           String   @id @default(cuid())
+  pollOptionId String
+  userId       String
+  createdAt    DateTime @default(now())
+
+  option PollOption @relation(fields: [pollOptionId], references: [id], onDelete: Cascade)
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollOptionId, userId])
+  @@index([userId])
+}
+
+model MessageMention {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+}
+
+model GroupInvite {
+  id             String       @id @default(cuid())
+  conversationId String
+  inviterId      String
+  inviteeId      String
+  token          String       @unique
+  status         InviteStatus @default(PENDING)
+  expiresAt      DateTime
+  createdAt      DateTime     @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  inviter      User         @relation("InviteSender", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee      User         @relation("InviteRecipient", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@index([inviteeId, status])
+  @@index([conversationId])
+}
+
+model Notification {
+  id             String           @id @default(cuid())
+  userId         String
+  actorId        String?
+  conversationId String?
+  messageId      String?
+  type           NotificationType
+  title          String
+  body           String
+  isRead         Boolean          @default(false)
+  metadata       Json?
+  createdAt      DateTime         @default(now())
+
+  user         User          @relation("NotificationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  actor        User?         @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+}
+
+model Workspace {
+  id             String   @id @default(cuid())
+  conversationId String   @unique
+  name           String
+  description    String?
+  createdById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  conversation Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  creator      User           @relation("WorkspaceCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  items        WorkspaceItem[]
+}
+
+model WorkspaceItem {
+  id              String              @id @default(cuid())
+  workspaceId     String
+  type            WorkspaceItemType
+  title           String
+  content         String?             @db.Text
+  status          WorkspaceItemStatus @default(TODO)
+  dueAt           DateTime?
+  assigneeId      String?
+  checklist       Json?
+  sourceMessageId String?
+  sourceExcerpt   String?
+  createdById     String
+  completedAt     DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignee      User?     @relation("WorkspaceItemAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  sourceMessage Message?  @relation(fields: [sourceMessageId], references: [id], onDelete: SetNull)
+  creator       User      @relation("WorkspaceItemCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, type])
+  @@index([workspaceId, status])
+  @@index([assigneeId])
+  @@index([dueAt])
+}
+
+model Branch {
+  id                   String   @id @default(cuid())
+  sourceConversationId String
+  conversationId       String   @unique
+  messageId            String
+  title                String
+  createdById          String
+  createdAt            DateTime @default(now())
+
+  sourceConversation Conversation @relation("SourceConversation", fields: [sourceConversationId], references: [id], onDelete: Cascade)
+  conversation       Conversation @relation("BranchConversation", fields: [conversationId], references: [id], onDelete: Cascade)
+  message            Message      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  creator            User         @relation("BranchCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([sourceConversationId])
+}
+
+model AiSummary {
+  id             String        @id @default(cuid())
+  conversationId String?
+  userId         String
+  kind           AiSummaryKind
+  title          String?
+  rangeStart     DateTime?
+  rangeEnd       DateTime?
+  content        Json
+  provider       String
+  model          String
+  createdAt      DateTime      @default(now())
+
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  evidence     AiEvidence[]
+
+  @@index([userId, createdAt])
+  @@index([conversationId, createdAt])
+}
+
+model AiEvidence {
+  id        String   @id @default(cuid())
+  summaryId String
+  messageId String
+  excerpt   String   @db.Text
+  note      String?
+  createdAt DateTime @default(now())
+
+  summary AiSummary @relation(fields: [summaryId], references: [id], onDelete: Cascade)
+  message Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([summaryId, messageId])
+  @@index([messageId])
+}
+
+model PersonalMemory {
+  id              String       @id @default(cuid())
+  userId          String
+  conversationId  String?
+  sourceMessageId String?
+  content         String       @db.Text
+  source          MemorySource @default(USER)
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceMessage Message? @relation(fields: [sourceMessageId], references: [id], onDelete: SetNull)
+
+  @@index([userId, isActive])
+  @@index([conversationId])
+}
+
+model MessageEmbedding {
+  id        String   @id @default(cuid())
+  messageId String   @unique
+  model     String
+  vector    Json
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+}

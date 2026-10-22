@@ -1,0 +1,6 @@
+* text=auto
+
+# Keep container and CI configuration LF-only regardless of the host OS.
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf

@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+build/
+.env
+.env.local
+.env.*.local
+!.env.example
+storage/uploads/*
+!storage/uploads/.gitkeep
+.pgdata/
+install.log
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
