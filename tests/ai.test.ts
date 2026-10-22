@@ -14,7 +14,7 @@ describe("AI failure behaviour", () => {
   it("reports that AI is unconfigured instead of returning fake output", async () => {
     const status = await aiSetupInfo();
     expect(status.configured).toBe(false);
-    expect(status.provider).toBe("ollama");
+    expect(status.provider).toBe("none");
     expect(status.missing.join(" ")).toContain("AI_PROVIDER");
     expect(status.embeddings.configured).toBe(false);
     expect(status.speechToText.configured).toBe(false);

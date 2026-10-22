@@ -60,16 +60,17 @@ function loadEnv() {
 export const env = loadEnv();
 
 export type AiProviderName = "ollama" | "openai" | "gemini";
+export type AiProviderSetting = AiProviderName | "none";
 
 export function getAiConfig():
   | { configured: true; provider: AiProviderName; model: string; missing: [] }
-  | { configured: false; provider: AiProviderName; model: string; missing: string[] } {
+  | { configured: false; provider: AiProviderSetting; model: string; missing: string[] } {
   const provider = env.AI_PROVIDER;
   if (provider === "none") {
     return {
       configured: false,
-      provider: "ollama",
-      model: env.OLLAMA_MODEL,
+      provider: "none",
+      model: "",
       missing: ["AI_PROVIDER (set to ollama, openai, or gemini)"],
     };
   }
@@ -90,10 +91,10 @@ export function getAiConfig():
 
 export function getEmbeddingConfig():
   | { configured: true; provider: AiProviderName; model: string }
-  | { configured: false; provider: AiProviderName; model: string; missing: string[] } {
+  | { configured: false; provider: AiProviderSetting; model: string; missing: string[] } {
   const provider = env.EMBEDDING_PROVIDER;
   if (provider === "none") {
-    return { configured: false, provider: "ollama", model: env.EMBEDDING_MODEL, missing: ["EMBEDDING_PROVIDER"] };
+    return { configured: false, provider: "none", model: "", missing: ["EMBEDDING_PROVIDER"] };
   }
   if (provider === "ollama") {
     return { configured: true, provider, model: env.EMBEDDING_MODEL };
