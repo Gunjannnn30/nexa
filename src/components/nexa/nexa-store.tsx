@@ -124,6 +124,7 @@ function useNexaStoreInternal(
   const pathname = usePathname();
   const activeIdRef = React.useRef<string | undefined>(initialConversationId);
   const profileRef = React.useRef(initialProfile);
+  const conversationsRef = React.useRef<Conversation[]>([]);
   const messagesRef = React.useRef<Record<string, Message[]>>({});
   const loadedRef = React.useRef<Set<string>>(new Set());
   const refreshTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -147,6 +148,8 @@ function useNexaStoreInternal(
   const [unreadNotifications, setUnreadNotifications] = React.useState(0);
   const [invites, setInvites] = React.useState<Invite[]>([]);
   const [ai, setAi] = React.useState<AiStatus | null>(null);
+  const [aiThinking, setAiThinking] = React.useState<Record<string, boolean>>({});
+  const [aiErrors, setAiErrors] = React.useState<Record<string, string | undefined>>({});
   const [replyTo, setReplyTo] = React.useState<Message | null>(null);
   const [draft, setDraft] = React.useState("");
   const [workspaceVersion, setWorkspaceVersion] = React.useState(0);
@@ -168,6 +171,9 @@ function useNexaStoreInternal(
   React.useEffect(() => {
     messagesRef.current = messagesByConversation;
   }, [messagesByConversation]);
+  React.useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   const refreshConversations = React.useCallback(async () => {
     try {
@@ -395,6 +401,16 @@ function useNexaStoreInternal(
         setReplyTo(null);
         scheduleRefresh();
         markRead(conversationId);
+        const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+        if (conversation?.isAi) {
+          setAiThinking((prev) => ({ ...prev, [conversationId]: true }));
+          setAiErrors((prev) => {
+            if (!(conversationId in prev)) return prev;
+            const next = { ...prev };
+            delete next[conversationId];
+            return next;
+          });
+        }
         return data.message;
       } catch (error) {
         toast.error(errorMessage(error));
@@ -554,6 +570,48 @@ function useNexaStoreInternal(
     },
     [openConversation, refreshConversations],
   );
+
+  /**
+   * Opens the viewer's private assistant thread, creating it lazily. Passing a
+   * prompt leaves it in the composer so the user can edit before sending.
+   */
+  const openAiAssistant = React.useCallback(
+    async (prompt?: string) => {
+      const data = await apiPost<{ conversation: Conversation }>("/api/ai/conversation", {});
+      setConversations((prev) => {
+        const rest = prev.filter((conversation) => conversation.id !== data.conversation.id);
+        return [data.conversation, ...rest].sort(
+          (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime(),
+        );
+      });
+      openConversation(data.conversation.id);
+      setAiErrors((prev) => {
+        if (!(data.conversation.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[data.conversation.id];
+        return next;
+      });
+      if (prompt) setDraft(prompt);
+      return data.conversation;
+    },
+    [openConversation],
+  );
+
+  const retryAiReply = React.useCallback(async (conversationId: string) => {
+    setAiThinking((prev) => ({ ...prev, [conversationId]: true }));
+    try {
+      await apiPost(`/api/conversations/${conversationId}/ai-retry`, {});
+      setAiErrors((prev) => {
+        const next = { ...prev };
+        delete next[conversationId];
+        return next;
+      });
+    } catch (error) {
+      setAiThinking((prev) => ({ ...prev, [conversationId]: false }));
+      toast.error(errorMessage(error));
+      throw error;
+    }
+  }, []);
 
   const conversationAction = React.useCallback(
     async (conversationId: string, action: string, body?: unknown) => {
@@ -735,6 +793,15 @@ function useNexaStoreInternal(
     const onDisconnect = () => setConnected(false);
 
     const onMessage = (message: Message) => {
+      if (message.sender.isBot) {
+        setAiThinking((prev) => ({ ...prev, [message.conversationId]: false }));
+        setAiErrors((prev) => {
+          if (!(message.conversationId in prev)) return prev;
+          const next = { ...prev };
+          delete next[message.conversationId];
+          return next;
+        });
+      }
       const current = activeIdRef.current;
       const isKnown = (messagesRef.current[message.conversationId] ?? []).some(
         (item) => item.id === message.id || (message.clientId && item.clientId === message.clientId),
@@ -881,6 +948,36 @@ function useNexaStoreInternal(
       }
     };
     const onNotificationsRead = () => setUnreadNotifications(0);
+    const onAiThinking = ({
+      conversationId,
+      thinking,
+    }: {
+      conversationId: string;
+      thinking: boolean;
+    }) => {
+      setAiThinking((prev) => ({ ...prev, [conversationId]: thinking }));
+      if (thinking) {
+        setAiErrors((prev) => {
+          if (!(conversationId in prev)) return prev;
+          const next = { ...prev };
+          delete next[conversationId];
+          return next;
+        });
+      }
+    };
+    const onAiError = ({
+      conversationId,
+      message,
+    }: {
+      conversationId: string;
+      message: string;
+    }) => {
+      setAiThinking((prev) => ({ ...prev, [conversationId]: false }));
+      setAiErrors((prev) => ({ ...prev, [conversationId]: message }));
+      if (activeIdRef.current === conversationId) {
+        toast.error(message);
+      }
+    };
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
@@ -899,6 +996,8 @@ function useNexaStoreInternal(
     socket.on("typing:update", onTyping);
     socket.on("notification:new", onNotification);
     socket.on("notifications:read", onNotificationsRead);
+    socket.on("ai:thinking", onAiThinking);
+    socket.on("ai:error", onAiError);
     socket.on("workspace:updated", () => setWorkspaceVersion((v) => v + 1));
 
     if (!socket.connected) socket.connect();
@@ -922,6 +1021,8 @@ function useNexaStoreInternal(
       socket.off("typing:update", onTyping);
       socket.off("notification:new", onNotification);
       socket.off("notifications:read", onNotificationsRead);
+      socket.off("ai:thinking", onAiThinking);
+      socket.off("ai:error", onAiError);
     };
   }, [
     appendMessage,
@@ -986,6 +1087,8 @@ function useNexaStoreInternal(
     unreadNotifications,
     invites,
     ai,
+    aiThinking,
+    aiErrors,
     replyTo,
     setReplyTo,
     draft,
@@ -1007,6 +1110,8 @@ function useNexaStoreInternal(
     forwardMessage,
     createBranch,
     createConversation,
+    openAiAssistant,
+    retryAiReply,
     conversationAction,
     leaveConversation,
     archiveConversation,

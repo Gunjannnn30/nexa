@@ -69,6 +69,7 @@ export async function sendMessage(
   senderId: string,
   conversationId: string,
   input: SendInput,
+  options: { asBot?: boolean; aiSourceMessageId?: string | null } = {},
 ): Promise<MessageDTO> {
   await requireMembership(senderId, conversationId);
   const conversation = await prisma.conversation.findUnique({
@@ -81,6 +82,7 @@ export async function sendMessage(
               id: true,
               username: true,
               name: true,
+              isBot: true,
               settings: { select: { notificationsEnabled: true } },
             },
           },
@@ -89,6 +91,19 @@ export async function sendMessage(
     },
   });
   if (!conversation) throw notFound("Conversation not found.");
+
+  const botMember = conversation.members.find((member) => member.user.isBot);
+  const isBotSender = Boolean(botMember && botMember.userId === senderId);
+  if (isBotSender && !options.asBot) {
+    throw forbidden("The assistant account cannot send messages directly.");
+  }
+  if (!isBotSender && botMember) {
+    // Assistant threads stay text-only so the model never receives opaque binary
+    // content and so polls cannot be created with a non-human participant.
+    if (!input.body.trim() || input.poll || input.attachmentIds.length) {
+      throw badRequest("NEXA AI conversations support text messages only.");
+    }
+  }
 
   if (conversation.type === "DIRECT") {
     const peer = conversation.members.find((m) => m.userId !== senderId);
@@ -143,6 +158,7 @@ export async function sendMessage(
         body: input.body.replace(/\u0000/g, "").trim(),
         replyToId: input.replyToId || null,
         forwardedFromId: input.forwardedFromId || null,
+        aiSourceMessageId: options.aiSourceMessageId ?? null,
         type: input.poll ? "POLL" : "TEXT",
         receipts: {
           create: memberIds

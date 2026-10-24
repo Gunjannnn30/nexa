@@ -27,6 +27,15 @@ export const registerSchema = z.object({
   email: emailSchema,
   username: usernameSchema,
   password: passwordSchema,
+  // Optional app-sharing invite. An invalid or expired token never blocks
+  // account creation; the API returns a warning instead.
+  inviteToken: z.string().trim().min(8).max(128).optional(),
+});
+
+export const createAppInviteSchema = z.object({
+  note: z.string().trim().max(280).optional(),
+  maxUses: z.number().int().min(1).max(50).optional(),
+  expiresInDays: z.number().int().min(1).max(30).optional(),
 });
 
 export const loginSchema = z.object({

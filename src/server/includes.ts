@@ -7,6 +7,7 @@ export const userSelect = {
   avatarUrl: true,
   bio: true,
   statusText: true,
+  isBot: true,
 } satisfies Prisma.UserSelect;
 
 export function messageInclude(viewerId: string) {

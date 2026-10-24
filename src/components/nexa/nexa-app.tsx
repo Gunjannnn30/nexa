@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import { TooltipProvider } from "@/components/ui";
 import { AiPanel } from "@/components/nexa/ai-panel";
 import { ChatView } from "@/components/nexa/chat-view";
@@ -15,8 +15,10 @@ import { SearchDialog } from "@/components/nexa/search-dialog";
 import { SettingsDialog } from "@/components/nexa/settings-dialog";
 import { Sidebar } from "@/components/nexa/sidebar";
 import { useNexa } from "@/components/nexa/nexa-store";
+import { takeAppFlash } from "@/lib/client/flash";
 import type { InfoTab } from "@/components/nexa/types";
-import type { Message } from "@/lib/client/types";import { cn } from "@/lib/utils";
+import type { Message } from "@/lib/client/types";
+import { cn } from "@/lib/utils";
 
 function useThemeSync() {
   const { profile } = useNexa();
@@ -45,7 +47,7 @@ function useThemeSync() {
 }
 
 export function NexaApp() {
-  const { activeId, openConversation, closeConversation, profile } = useNexa();
+  const { activeId, activeConversation, openConversation, closeConversation, profile } = useNexa();
   const [filter, setFilter] = React.useState<InboxFilter>("all");
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [searchScope, setSearchScope] = React.useState<"all" | "conversation">("all");
@@ -58,6 +60,14 @@ export function NexaApp() {
   const [aiOpen, setAiOpen] = React.useState(false);
   const [forwarding, setForwarding] = React.useState<Message | null>(null);
   const theme = useThemeSync();
+
+  React.useEffect(() => {
+    const flash = takeAppFlash();
+    if (!flash) return;
+    if (flash.tone === "warning") toast.warning(flash.message);
+    else if (flash.tone === "error") toast.error(flash.message);
+    else toast.success(flash.message);
+  }, []);
 
   const openSearch = React.useCallback((scope: "all" | "conversation") => {
     setSearchScope(scope);
@@ -114,6 +124,10 @@ export function NexaApp() {
       setAiOpen(false);
     }
   }, [activeId]);
+
+  React.useEffect(() => {
+    if (activeConversation?.isAi) setAiOpen(false);
+  }, [activeConversation?.isAi]);
 
   return (
     <TooltipProvider delayDuration={220}>

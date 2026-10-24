@@ -7,6 +7,7 @@ export type PublicUser = {
   statusText: string | null;
   initials: string;
   isSelf?: boolean;
+  isBot?: boolean;
 };
 
 export type Attachment = {
@@ -117,6 +118,7 @@ export type Conversation = {
   lastReadAt: string | null;
   workspaceId: string | null;
   pinnedCount: number;
+  isAi: boolean;
   branch: {
     id: string;
     sourceConversationId: string;
@@ -200,6 +202,48 @@ export type Invite = {
   inviter: PublicUser;
   expiresAt: string;
   createdAt: string;
+};
+
+export type AppInviteStatus = "active" | "expired" | "revoked" | "exhausted";
+
+export type AppInvite = {
+  id: string;
+  token: string;
+  url: string;
+  note: string | null;
+  maxUses: number;
+  usedCount: number;
+  remainingUses: number;
+  expiresAt: string;
+  revokedAt: string | null;
+  createdAt: string;
+  status: AppInviteStatus;
+  redemptions: {
+    id: string;
+    createdAt: string;
+    user: {
+      id: string;
+      name: string;
+      username: string;
+      avatarUrl: string | null;
+      initials: string;
+    };
+  }[];
+};
+
+export type AppInvitePreview = {
+  valid: boolean;
+  status: "active" | "expired" | "revoked" | "exhausted" | "invalid";
+  reason: string | null;
+  inviter: {
+    name: string;
+    username: string;
+    avatarUrl: string | null;
+    initials: string;
+  } | null;
+  note: string | null;
+  expiresAt: string | null;
+  remainingUses: number | null;
 };
 
 export type WorkspaceItem = {

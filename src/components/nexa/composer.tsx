@@ -79,6 +79,8 @@ export function Composer({ onOpenAi }: { onOpenAi: () => void }) {
     sendMessage,
     sending,
     sendTyping,
+    ai,
+    aiThinking,
   } = useNexa();
 
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
@@ -94,6 +96,10 @@ export function Composer({ onOpenAi }: { onOpenAi: () => void }) {
   const [pollOptions, setPollOptions] = React.useState(["", ""]);
   const [pollMultiple, setPollMultiple] = React.useState(false);
   const [pollCloses, setPollCloses] = React.useState("");
+
+  const isAi = Boolean(activeConversation?.isAi);
+  const aiBlocked = Boolean(isAi && ai && !ai.configured);
+  const assistantBusy = Boolean(isAi && activeConversation?.id && aiThinking[activeConversation.id]);
 
   React.useEffect(() => {
     const textarea = textareaRef.current;
@@ -137,6 +143,10 @@ export function Composer({ onOpenAi }: { onOpenAi: () => void }) {
   const addFiles = async (files: FileList | File[]) => {
     const list = [...files];
     if (!list.length) return;
+    if (isAi) {
+      toast.error("NEXA AI conversations are text-only. Attachments are disabled here.");
+      return;
+    }
     if (pending.filter((item) => item.status !== "error").length + list.length > 10) {
       toast.error("You can attach up to 10 files to one message.");
       return;
@@ -196,6 +206,14 @@ export function Composer({ onOpenAi }: { onOpenAi: () => void }) {
   };
 
   const submit = async () => {
+    if (aiBlocked) {
+      toast.error("NEXA AI is unavailable until the server has an AI provider. No message was sent.");
+      return;
+    }
+    if (assistantBusy) {
+      toast.error("Wait for NEXA AI to finish this reply before sending another message.");
+      return;
+    }
     const attachments = pending.filter((item) => item.status === "ready" && item.attachment);
     const uploading = pending.some((item) => item.status === "uploading");
     if (uploading) {
@@ -274,8 +292,9 @@ export function Composer({ onOpenAi }: { onOpenAi: () => void }) {
   };
 
   const readyCount = pending.filter((item) => item.status === "ready").length;
-  const canSend = Boolean(draft.trim() || readyCount || poll) && !sending;
   const isRoom = activeConversation?.type === "ROOM";
+  const canSend =
+    Boolean(draft.trim() || readyCount || poll) && !sending && !aiBlocked && !assistantBusy;
 
   return (
     <div className="relative border-t border-border/70 bg-card/30 px-3 pb-3 pt-2.5 sm:px-5 sm:pb-4">
@@ -372,15 +391,17 @@ export function Composer({ onOpenAi }: { onOpenAi: () => void }) {
       >
         <div className="flex items-end gap-1.5 p-1.5">
           <div className="flex shrink-0 items-center gap-0.5 pb-0.5">
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-accent hover:text-foreground"
-              aria-label="Attach files"
-              title="Attach files"
-            >
-              <Paperclip className="h-4 w-4" />
-            </button>
+            {!isAi ? (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                aria-label="Attach files"
+                title="Attach files"
+              >
+                <Paperclip className="h-4 w-4" />
+              </button>
+            ) : null}
             <Popover>
               <PopoverTrigger asChild>
                 <button
@@ -407,30 +428,35 @@ export function Composer({ onOpenAi }: { onOpenAi: () => void }) {
                 </div>
               </PopoverContent>
             </Popover>
-            <button
-              type="button"
-              onClick={openPoll}
-              className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-lg transition hover:bg-accent hover:text-foreground",
-                poll ? "text-signal" : "text-muted-foreground",
-              )}
-              aria-label="Create a poll"
-              title="Create a poll"
-            >
-              <BarChart3 className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              onClick={onOpenAi}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-accent hover:text-signal"
-              aria-label="Open AI assistant"
-              title="Write with NEXA AI"
-            >
-              <Sparkles className="h-4 w-4" />
-            </button>
+            {!isAi ? (
+              <>
+                <button
+                  type="button"
+                  onClick={openPoll}
+                  className={cn(
+                    "flex h-8 w-8 items-center justify-center rounded-lg transition hover:bg-accent hover:text-foreground",
+                    poll ? "text-signal" : "text-muted-foreground",
+                  )}
+                  aria-label="Create a poll"
+                  title="Create a poll"
+                >
+                  <BarChart3 className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenAi}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-accent hover:text-signal"
+                  aria-label="Open AI assistant"
+                  title="Write with NEXA AI"
+                >
+                  <Sparkles className="h-4 w-4" />
+                </button>
+              </>
+            ) : null}
           </div>
 
           <textarea
+            id="nexa-composer-input"
             ref={textareaRef}
             value={draft}
             onChange={(event) => onDraftChange(event.target.value)}
@@ -449,13 +475,17 @@ export function Composer({ onOpenAi }: { onOpenAi: () => void }) {
             }}
             rows={1}
             placeholder={
-              isRoom
-                ? "Message this room — it disappears when the room expires…"
-                : activeConversation?.type === "DIRECT"
-                  ? `Message ${activeConversation.title}…`
-                  : "Write a message…"
+              isAi
+                ? aiBlocked
+                  ? "NEXA AI is unavailable — no provider is configured"
+                  : "Ask NEXA AI anything… (text only)"
+                : isRoom
+                  ? "Message this room — it disappears when the room expires…"
+                  : activeConversation?.type === "DIRECT"
+                    ? `Message ${activeConversation.title}…`
+                    : "Write a message…"
             }
-            aria-label="Message"
+            aria-label={isAi ? "Message NEXA AI" : "Message"}
             className="scroll-thin max-h-[200px] min-h-[36px] flex-1 resize-none bg-transparent px-1.5 py-2 text-[13px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/60"
           />
 
@@ -480,11 +510,22 @@ export function Composer({ onOpenAi }: { onOpenAi: () => void }) {
             </button>
           </div>
         </div>
-        <div className="flex items-center justify-between border-t border-border/50 px-2.5 py-1 text-[9px] text-muted-foreground/70">
-          <span>
-            <kbd className="font-sans">Enter</kbd> send · <kbd className="font-sans">Shift+Enter</kbd> new line
+        <div className="flex items-center justify-between gap-3 border-t border-border/50 px-2.5 py-1 text-[9px] text-muted-foreground/70">
+          <span className="truncate">
+            {assistantBusy ? (
+              <span className="inline-flex items-center gap-1.5 text-signal">
+                <span className="h-1 w-1 animate-pulse rounded-full bg-signal" />
+                NEXA AI is replying…
+              </span>
+            ) : (
+              <>
+                <kbd className="font-sans">Enter</kbd> send · <kbd className="font-sans">Shift+Enter</kbd> new line
+              </>
+            )}
           </span>
-          {activeConversation?.type === "ROOM" && activeConversation.expiresAt ? (
+          {isAi ? (
+            <span className="shrink-0">Text only · AI can be wrong · provider-readable</span>
+          ) : activeConversation?.type === "ROOM" && activeConversation.expiresAt ? (
             <span className="inline-flex items-center gap-1">
               <Badge tone="danger">room</Badge>
               expires {new Date(activeConversation.expiresAt).toLocaleDateString()}

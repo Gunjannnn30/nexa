@@ -155,9 +155,10 @@ export async function getOrCreateDirect(viewerId: string, targetUserId: string) 
   if (targetUserId === viewerId) throw badRequest("You cannot message yourself.");
   const target = await prisma.user.findUnique({
     where: { id: targetUserId },
-    select: { id: true, settings: { select: { discoverable: true } } },
+    select: { id: true, isBot: true, settings: { select: { discoverable: true } } },
   });
   if (!target) throw notFound("User not found.");
+  if (target.isBot) throw forbidden("Open NEXA AI from its own tab.");
   const contact = await prisma.contact.findUnique({
     where: { ownerId_contactUserId: { ownerId: viewerId, contactUserId: targetUserId } },
     select: { id: true },
@@ -226,9 +227,12 @@ export async function createConversation(viewerId: string, input: CreateInput): 
   if (!memberIds.length) throw badRequest("Add at least one member.");
   const users = await prisma.user.findMany({
     where: { id: { in: memberIds } },
-    select: { id: true },
+    select: { id: true, isBot: true },
   });
   if (users.length !== memberIds.length) throw badRequest("One or more members no longer exist.");
+  if (users.some((user) => user.isBot)) {
+    throw badRequest("NEXA AI can only be used in its own private chat.");
+  }
   const expiresAt =
     input.kind === "room" && input.expiresInHours
       ? new Date(Date.now() + input.expiresInHours * 3600_000)
@@ -373,7 +377,13 @@ export async function addMembers(viewerId: string, conversationId: string, userI
   const existingIds = new Set(existing.map((m) => m.userId));
   const unique = [...new Set(userIds)].filter((id) => !existingIds.has(id));
   if (existingIds.size + unique.length > 50) throw badRequest("Groups are limited to 50 members.");
-  const users = await prisma.user.findMany({ where: { id: { in: unique } }, select: { id: true } });
+  const users = await prisma.user.findMany({
+    where: { id: { in: unique } },
+    select: { id: true, isBot: true },
+  });
+  if (users.some((user) => user.isBot)) {
+    throw badRequest("NEXA AI can only be used in its own private chat.");
+  }
   if (!users.length) return getConversationDTO(viewerId, conversationId);
   const addedIds = users.map((u) => u.id);
   await prisma.conversationMember.createMany({

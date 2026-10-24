@@ -104,6 +104,7 @@ model User {
   avatarUrl   String?
   bio         String?
   statusText  String?
+  isBot       Boolean  @default(false)
   lastSeenAt  DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -138,6 +139,8 @@ model User {
   notifications        Notification[]    @relation("NotificationRecipient")
   notificationsActed   Notification[]    @relation("NotificationActor")
   mentions             MessageMention[]
+  appInvitesSent       AppInvite[]       @relation("AppInviteCreator")
+  appInviteRedemptions AppInviteRedemption[]
 
   @@index([username])
   @@index([lastSeenAt])
@@ -193,6 +196,41 @@ model Contact {
 
   @@unique([ownerId, contactUserId])
   @@index([contactUserId])
+}
+
+// App-level sharing invites. Distinct from `GroupInvite`, which is scoped to a
+// single conversation. An AppInvite lets anyone holding the link register a new
+// NEXA account and connect with the person who shared it.
+model AppInvite {
+  id         String    @id @default(cuid())
+  token      String    @unique
+  inviterId  String
+  note       String?   @db.VarChar(280)
+  maxUses    Int       @default(1)
+  usedCount  Int       @default(0)
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  inviter    User                 @relation("AppInviteCreator", fields: [inviterId], references: [id], onDelete: Cascade)
+  redemptions AppInviteRedemption[]
+
+  @@index([inviterId, createdAt])
+  @@index([expiresAt])
+}
+
+model AppInviteRedemption {
+  id        String   @id @default(cuid())
+  inviteId  String
+  userId    String
+  createdAt DateTime @default(now())
+
+  invite AppInvite @relation(fields: [inviteId], references: [id], onDelete: Cascade)
+  user   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([inviteId, userId])
+  @@index([userId])
 }
 
 model Block {
@@ -284,6 +322,8 @@ model Message {
   type           MessageType @default(TEXT)
   replyToId      String?
   forwardedFromId String?
+  // Idempotency marker for assistant replies: one bot message per user message.
+  aiSourceMessageId String?  @unique
   editedAt       DateTime?
   deletedAt      DateTime?
   createdAt      DateTime    @default(now())

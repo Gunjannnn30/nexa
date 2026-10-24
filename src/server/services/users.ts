@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import type { Prisma } from "@prisma/client";
 import { badRequest, conflict, forbidden, notFound, unauthorized } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
+import { isReservedAiEmail, isReservedAiUsername } from "@/server/ai/identity";
 import type { PublicUserDTO, UserSettingsDTO } from "@/server/serializers";
 import { publicUser, serializeSettings } from "@/server/serializers";
 import { deleteStorageObject } from "@/server/storage";
@@ -16,6 +17,7 @@ const publicSelect = {
   statusText: true,
   lastSeenAt: true,
   createdAt: true,
+  isBot: true,
 } satisfies Prisma.UserSelect;
 
 export async function hashPassword(password: string) {
@@ -34,6 +36,12 @@ export async function registerUser(input: {
 }) {
   const email = input.email.trim().toLowerCase();
   const username = input.username.trim().toLowerCase();
+  if (isReservedAiUsername(username)) {
+    throw conflict("That username is reserved for NEXA AI.", { field: "username" });
+  }
+  if (isReservedAiEmail(email)) {
+    throw conflict("That email address is reserved for NEXA AI.", { field: "email" });
+  }
   const existing = await prisma.user.findFirst({
     where: { OR: [{ email }, { username }] },
     select: { email: true, username: true },
@@ -61,7 +69,7 @@ export async function registerUser(input: {
 export async function authenticateUser(identifier: string, password: string) {
   const trimmed = identifier.trim().toLowerCase();
   const user = await prisma.user.findFirst({
-    where: { OR: [{ email: trimmed }, { username: trimmed }] },
+    where: { OR: [{ email: trimmed }, { username: trimmed }], isBot: false },
   });
   if (!user) {
     // Equalise timing roughly against user enumeration.
@@ -77,7 +85,7 @@ export async function findUserByIdentifier(identifier: string) {
   const value = identifier.trim().toLowerCase();
   const isEmail = value.includes("@");
   return prisma.user.findFirst({
-    where: isEmail ? { email: value } : { username: value },
+    where: isEmail ? { email: value, isBot: false } : { username: value, isBot: false },
     select: { ...publicSelect, settings: { select: { discoverable: true } } },
   });
 }
@@ -87,6 +95,9 @@ export async function updateProfile(
   input: { name?: string; username?: string; bio?: string | null; statusText?: string | null; avatarUrl?: string | null },
 ): Promise<PublicUserDTO> {
   if (input.username) {
+    if (isReservedAiUsername(input.username)) {
+      throw conflict("That username is reserved for NEXA AI.", { field: "username" });
+    }
     const taken = await prisma.user.findFirst({
       where: { username: input.username, id: { not: userId } },
       select: { id: true },
@@ -153,6 +164,7 @@ export async function searchUsers(viewerId: string, query: string) {
     where: {
       AND: [
         { id: { not: viewerId } },
+        { isBot: false },
         {
           OR: [
             { username: { contains: q, mode: "insensitive" } },

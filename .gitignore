@@ -10,6 +10,7 @@ storage/uploads/*
 !storage/uploads/.gitkeep
 .pgdata/
 install.log
+.qa/
 coverage/
 *.tsbuildinfo
 next-env.d.ts

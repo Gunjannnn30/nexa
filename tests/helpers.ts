@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/prisma";
+import { resetAiAssistantState } from "@/server/services/ai-assistant";
 import { registerUser } from "@/server/services/users";
 import { createConversation } from "@/server/services/conversations";
 import { sendMessage } from "@/server/services/messages";
@@ -21,6 +22,7 @@ export async function resetDatabase() {
     .map((row) => `"public"."${row.tablename.replace(/"/g, '""')}"`)
     .join(", ");
   await prisma.$executeRawUnsafe(`TRUNCATE TABLE ${tableList} RESTART IDENTITY CASCADE`);
+  resetAiAssistantState();
 }
 
 export async function createTestUser(label = "user") {

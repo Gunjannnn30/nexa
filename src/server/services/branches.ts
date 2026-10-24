@@ -1,4 +1,4 @@
-import { forbidden, notFound } from "@/lib/errors";
+import { badRequest, forbidden, notFound } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import { requireMembership } from "@/server/authorization";
 import { conversationInclude } from "@/server/includes";
@@ -21,12 +21,15 @@ export async function createBranch(
         select: {
           title: true,
           type: true,
-          members: { select: { userId: true } },
+          members: { select: { userId: true, user: { select: { isBot: true } } } },
         },
       },
     },
   });
   if (!source) throw notFound("Message not found.");
+  if (source.conversation.members.some((member) => member.user.isBot)) {
+    throw badRequest("Side threads are not available in NEXA AI chats.");
+  }
   const memberIds = [
     ...new Set([userId, ...input.memberIds].filter((id) => id.length > 0)),
   ].slice(0, 50);

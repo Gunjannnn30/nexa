@@ -6,15 +6,20 @@ import {
   Ban,
   Camera,
   Check,
+  Clock3,
+  Copy,
   Database,
   Download,
   KeyRound,
+  Link2,
   Mail,
   Palette,
   Plus,
+  Share2,
   ShieldCheck,
   SunMoon,
   Trash2,
+  UserPlus,
   UserRound,
   Users,
 } from "lucide-react";
@@ -40,14 +45,31 @@ import {
 } from "@/components/ui";
 import { useNexa } from "@/components/nexa/nexa-store";
 import { api, apiDelete, apiGet, apiPatch, apiPost, errorMessage, uploadFile } from "@/lib/client/api";
-import type { Memory, PublicUser, UserSettings } from "@/lib/client/types";
+import type { AppInvite, Memory, PublicUser, UserSettings } from "@/lib/client/types";
 import { relative } from "@/lib/client/format";
 import { cn } from "@/lib/utils";
 
 type BlockedUser = { id: string; user: PublicUser; createdAt: string };
 type Contact = { id: string; nickname: string | null; createdAt: string; user: PublicUser };
 
-type TabKey = "profile" | "preferences" | "privacy" | "security" | "data";
+type TabKey = "profile" | "preferences" | "privacy" | "share" | "security" | "data";
+
+async function copyText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+  }
+}
 
 function SettingSwitch({
   label,
@@ -139,6 +161,14 @@ export function SettingsDialog({
   const [privacyLoading, setPrivacyLoading] = React.useState(false);
   const [contactInput, setContactInput] = React.useState("");
   const [contactBusy, setContactBusy] = React.useState(false);
+
+  const [appInvites, setAppInvites] = React.useState<AppInvite[]>([]);
+  const [invitesLoading, setInvitesLoading] = React.useState(false);
+  const [inviteBusy, setInviteBusy] = React.useState(false);
+  const [inviteNote, setInviteNote] = React.useState("");
+  const [inviteMaxUses, setInviteMaxUses] = React.useState(5);
+  const [inviteExpiry, setInviteExpiry] = React.useState(7);
+  const [inviteCopied, setInviteCopied] = React.useState<string | null>(null);
 
   const [currentPassword, setCurrentPassword] = React.useState("");
   const [newPassword, setNewPassword] = React.useState("");
@@ -248,6 +278,78 @@ export function SettingsDialog({
   React.useEffect(() => {
     if (open && tab === "privacy") void loadPrivacy();
   }, [open, tab, loadPrivacy]);
+
+  const loadAppInvites = React.useCallback(async () => {
+    setInvitesLoading(true);
+    try {
+      const data = await apiGet<{ invites: AppInvite[] }>("/api/app-invites");
+      setAppInvites(data.invites);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setInvitesLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (open && tab === "share") void loadAppInvites();
+  }, [open, tab, loadAppInvites]);
+
+  const createInvite = async () => {
+    setInviteBusy(true);
+    try {
+      const data = await apiPost<{ invite: AppInvite }>("/api/app-invites", {
+        ...(inviteNote.trim() ? { note: inviteNote.trim() } : {}),
+        maxUses: inviteMaxUses,
+        expiresInDays: inviteExpiry,
+      });
+      setAppInvites((current) => [data.invite, ...current]);
+      setInviteNote("");
+      toast.success("Invite link created. Share it with anyone you want on NEXA.");
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  const copyInvite = async (invite: AppInvite) => {
+    const copied = await copyText(invite.url);
+    if (!copied) {
+      toast.error("Could not copy the invite link. Select it and copy manually.");
+      return;
+    }
+    setInviteCopied(invite.id);
+    window.setTimeout(() => setInviteCopied((current) => (current === invite.id ? null : current)), 2200);
+    toast.success("Invite link copied.");
+  };
+
+  const shareInvite = async (invite: AppInvite) => {
+    const text = `${profile.name} invited you to NEXA — a real-time messaging workspace. Join here: ${invite.url}`;
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({ title: "Join NEXA", text, url: invite.url });
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      }
+    }
+    await copyInvite(invite);
+  };
+
+  const revokeInvite = async (invite: AppInvite) => {
+    if (!window.confirm("Revoke this invite? Anyone who already joined keeps their account, but the link will stop working.")) {
+      return;
+    }
+    setInviteCopied(null);
+    try {
+      const data = await apiDelete<{ invite: AppInvite }>(`/api/app-invites/${invite.id}`);
+      setAppInvites((current) => current.map((item) => (item.id === invite.id ? data.invite : item)));
+      toast.success("Invite revoked.");
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  };
 
   const addContact = async () => {
     if (contactInput.trim().length < 3) {
@@ -406,6 +508,11 @@ export function SettingsDialog({
               <TabsTrigger value="privacy">
                 <span className="inline-flex items-center gap-1.5 [&>svg]:hidden sm:[&>svg]:block">
                   <ShieldCheck className="h-3 w-3" /> Privacy
+                </span>
+              </TabsTrigger>
+              <TabsTrigger value="share">
+                <span className="inline-flex items-center gap-1.5 [&>svg]:hidden sm:[&>svg]:block">
+                  <Share2 className="h-3 w-3" /> Share
                 </span>
               </TabsTrigger>
               <TabsTrigger value="security">
@@ -843,6 +950,215 @@ export function SettingsDialog({
                     ))}
                   </ul>
                 )}
+              </section>
+            </TabsContent>
+
+            <TabsContent value="share" className="space-y-6">
+              <section className="rounded-2xl border border-signal/25 bg-signal/[0.04] p-4">
+                <div className="flex items-start gap-2.5">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-signal/30 bg-signal/10 text-signal">
+                    <UserPlus className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <p className="text-[13px] font-semibold">Invite someone to NEXA</p>
+                    <p className="mt-0.5 text-[10.5px] leading-relaxed text-muted-foreground">
+                      A link creates a real account, connects you as mutual contacts, and opens a
+                      direct conversation. Each link expires and has a use limit.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  <Field label="Note (optional)" hint="Only shown on the registration page to the invitee.">
+                    <Input
+                      value={inviteNote}
+                      onChange={(event) => setInviteNote(event.target.value)}
+                      maxLength={280}
+                      placeholder="Join me on NEXA"
+                    />
+                  </Field>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Link expires in">
+                      <select
+                        value={inviteExpiry}
+                        onChange={(event) => setInviteExpiry(Number(event.target.value))}
+                        className="h-9 w-full rounded-lg border border-input bg-background/60 px-2.5 text-[12px] text-foreground outline-none focus:border-signal/50 focus:ring-2 focus:ring-signal/15"
+                      >
+                        {[1, 3, 7, 14, 30].map((days) => (
+                          <option key={days} value={days}>
+                            {days === 1 ? "1 day" : `${days} days`}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="Maximum uses">
+                      <select
+                        value={inviteMaxUses}
+                        onChange={(event) => setInviteMaxUses(Number(event.target.value))}
+                        className="h-9 w-full rounded-lg border border-input bg-background/60 px-2.5 text-[12px] text-foreground outline-none focus:border-signal/50 focus:ring-2 focus:ring-signal/15"
+                      >
+                        {[1, 3, 5, 10, 25, 50].map((uses) => (
+                          <option key={uses} value={uses}>
+                            {uses === 1 ? "1 person" : `${uses} people`}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[9.5px] leading-relaxed text-muted-foreground">
+                      Anyone with an active link can register until it expires or runs out.
+                    </p>
+                    <Button variant="signal" loading={inviteBusy} onClick={() => void createInvite()}>
+                      <Link2 className="h-3.5 w-3.5" /> Create link
+                    </Button>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <SectionTitle
+                  action={
+                    <button
+                      type="button"
+                      onClick={() => void loadAppInvites()}
+                      className="text-[10px] font-medium text-muted-foreground transition hover:text-foreground"
+                    >
+                      Refresh
+                    </button>
+                  }
+                >
+                  Your invite links
+                </SectionTitle>
+
+                {invitesLoading ? (
+                  <div className="flex items-center justify-center gap-2 rounded-xl border border-border/60 bg-background/30 px-4 py-8 text-[11px] text-muted-foreground">
+                    <Spinner className="h-3.5 w-3.5" /> Loading links…
+                  </div>
+                ) : appInvites.length === 0 ? (
+                  <EmptyState
+                    icon={<Share2 className="h-4 w-4" />}
+                    title="No invite links yet"
+                    description="Create a link above and send it to someone you want on NEXA. You can revoke it at any time."
+                    className="py-8"
+                  />
+                ) : (
+                  <ul className="space-y-2.5">
+                    {appInvites.map((invite) => (
+                      <li
+                        key={invite.id}
+                        className="rounded-2xl border border-border/60 bg-background/30 p-3.5"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <Badge
+                                tone={
+                                  invite.status === "active"
+                                    ? "signal"
+                                    : invite.status === "revoked"
+                                      ? "danger"
+                                      : "outline"
+                                }
+                              >
+                                {invite.status}
+                              </Badge>
+                              <span className="text-[10px] text-muted-foreground">
+                                {invite.usedCount} of {invite.maxUses} used
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[12px] font-medium">
+                              {invite.note || "No note"}
+                            </p>
+                            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9.5px] text-muted-foreground">
+                              <span className="inline-flex items-center gap-1">
+                                <Clock3 className="h-2.5 w-2.5" />
+                                {invite.status === "expired" ? "expired" : "expires"}{" "}
+                                {new Date(invite.expiresAt).toLocaleDateString()}
+                              </span>
+                              <span>·</span>
+                              <span>created {relative(invite.createdAt)}</span>
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void shareInvite(invite)}
+                              disabled={invite.status !== "active"}
+                            >
+                              <Share2 className="h-3 w-3" /> Share
+                            </Button>
+                            {invite.status === "active" ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-danger hover:text-danger"
+                                onClick={() => void revokeInvite(invite)}
+                              >
+                                <Trash2 className="h-3 w-3" /> Revoke
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <div className="mt-2.5 flex items-center gap-1.5">
+                          <input
+                            readOnly
+                            value={invite.url}
+                            aria-label="Invite link"
+                            onFocus={(event) => event.currentTarget.select()}
+                            className="h-8 min-w-0 flex-1 rounded-lg border border-border/60 bg-background/60 px-2.5 text-[10px] text-muted-foreground outline-none focus:border-signal/40"
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="shrink-0"
+                            onClick={() => void copyInvite(invite)}
+                          >
+                            {inviteCopied === invite.id ? (
+                              <>
+                                <Check className="h-3 w-3 text-signal" /> Copied
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3 w-3" /> Copy
+                              </>
+                            )}
+                          </Button>
+                        </div>
+
+                        {invite.redemptions.length > 0 ? (
+                          <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-border/50 pt-2.5">
+                            <span className="text-[9px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                              Joined
+                            </span>
+                            {invite.redemptions.map((redemption) => (
+                              <span
+                                key={redemption.id}
+                                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/50 py-0.5 pl-0.5 pr-2 text-[9.5px] text-muted-foreground"
+                                title={`${redemption.user.name} joined ${relative(redemption.createdAt)}`}
+                              >
+                                <Avatar
+                                  name={redemption.user.name}
+                                  src={redemption.user.avatarUrl}
+                                  id={redemption.user.id}
+                                  size="xs"
+                                />
+                                {redemption.user.name}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <p className="mt-3 rounded-xl border border-border/50 bg-background/30 px-3 py-2.5 text-[9.5px] leading-relaxed text-muted-foreground">
+                  Treat invite links like passwords: anyone who has one can use it while it is active.
+                  Revoking stops new sign-ups immediately. People who already joined keep their accounts.
+                </p>
               </section>
             </TabsContent>
 

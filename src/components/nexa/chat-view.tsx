@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  AlertTriangle,
   Archive,
   ArrowDown,
   ArrowLeft,
@@ -10,10 +11,13 @@ import {
   Download,
   GitBranch,
   Info as InfoIcon,
+  Lightbulb,
   MessageSquare,
   MoreVertical,
   Pin,
+  RefreshCw,
   Search,
+  ShieldCheck,
   Sparkles,
   Star,
   Users,
@@ -42,8 +46,27 @@ import type { Conversation, Message } from "@/lib/client/types";
 import { dayLabel, isSameDayValue, lastSeenLabel } from "@/lib/client/format";
 import { cn } from "@/lib/utils";
 
+const aiPrompts = [
+  "Summarize what I should focus on today",
+  "Draft a friendly project update for my team",
+  "Help me brainstorm a product launch checklist",
+  "Explain a tricky technical concept simply",
+];
+
 function HeaderPresence({ conversation }: { conversation: Conversation }) {
-  const { presence, profile } = useNexa();
+  const { presence, profile, ai } = useNexa();
+  if (conversation.isAi) {
+    if (!ai) return <span className="text-muted-foreground">Assistant · checking provider…</span>;
+    if (!ai.configured) return <span className="text-amber-500">Assistant · provider not configured</span>;
+    return (
+      <span className="inline-flex min-w-0 items-center gap-1.5 text-signal">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-signal" />
+        <span className="truncate">
+          Assistant · {ai.provider} · {ai.model}
+        </span>
+      </span>
+    );
+  }
   if (conversation.type === "DIRECT" && conversation.peer) {
     const state = presence[conversation.peer.id];
     if (state?.hidden) return <span className="text-muted-foreground">Last seen hidden</span>;
@@ -118,6 +141,11 @@ export function ChatView({
     favoriteConversation,
     archiveConversation,
     setReplyTo,
+    ai,
+    aiThinking,
+    aiErrors,
+    retryAiReply,
+    setDraft,
   } = useNexa();
 
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -128,6 +156,11 @@ export function ChatView({
   const [showJump, setShowJump] = React.useState(false);
 
   const conversationId = activeConversation?.id;
+  const isAiConversation = Boolean(activeConversation?.isAi);
+  const hasMessages = activeMessages.length > 0;
+  const aiThinkingNow = conversationId ? Boolean(aiThinking[conversationId]) : false;
+  const aiErrorNow = conversationId ? aiErrors[conversationId] : undefined;
+  const aiConfigured = Boolean(ai?.configured);
 
   const scrollToBottom = React.useCallback((behavior: ScrollBehavior = "auto") => {
     bottomRef.current?.scrollIntoView({ behavior, block: "end" });
@@ -144,10 +177,21 @@ export function ChatView({
         const element = document.getElementById(`message-${focusId}`);
         element?.scrollIntoView({ block: "center", behavior: "auto" });
       });
+    } else if (!hasMessages) {
+      // Empty threads show their intro/empty state from the top instead of
+      // scrolling past it to the composer.
+      container.scrollTop = 0;
     } else {
       requestAnimationFrame(() => scrollToBottom());
     }
-  }, [conversationId, focusId, loadingMessages, activeConversation, scrollToBottom]);
+  }, [
+    conversationId,
+    focusId,
+    loadingMessages,
+    activeConversation,
+    scrollToBottom,
+    hasMessages,
+  ]);
 
   React.useEffect(() => {
     if (!conversationId) return;
@@ -168,6 +212,11 @@ export function ChatView({
     const element = document.getElementById(`message-${focusId}`);
     element?.scrollIntoView({ block: "center" });
   }, [focusId, activeMessages.length]);
+
+  React.useEffect(() => {
+    if (!aiThinkingNow) return;
+    requestAnimationFrame(() => scrollToBottom("smooth"));
+  }, [aiThinkingNow, scrollToBottom]);
 
   const onScroll = () => {
     const container = scrollRef.current;
@@ -222,6 +271,17 @@ export function ChatView({
     anchor.remove();
   };
 
+  const applyPrompt = (prompt: string) => {
+    setDraft(prompt);
+    requestAnimationFrame(() => {
+      const input = document.getElementById("nexa-composer-input");
+      if (input instanceof HTMLTextAreaElement) {
+        input.focus();
+        input.setSelectionRange(prompt.length, prompt.length);
+      }
+    });
+  };
+
   let previous: Message | undefined;
 
   return (
@@ -260,6 +320,7 @@ export function ChatView({
               {activeConversation.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-signal" /> : null}
               {muted ? <VolumeX className="h-3 w-3 shrink-0 text-muted-foreground" /> : null}
               {activeConversation.isTemporary ? <Badge tone="danger">room</Badge> : null}
+              {isAiConversation ? <Badge tone="signal">assistant</Badge> : null}
             </div>
             <div className="mt-0.5 flex items-center gap-1.5 text-[10px]">
               <HeaderPresence conversation={activeConversation} />
@@ -292,25 +353,27 @@ export function ChatView({
               {activeConversation.pinnedCount}
             </button>
           ) : null}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={onToggleAi}
-                className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-lg transition",
-                  aiOpen
-                    ? "bg-signal/15 text-signal"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-                aria-label="AI assistant"
-                aria-pressed={aiOpen}
-              >
-                <Sparkles className="h-4 w-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>AI assistant</TooltipContent>
-          </Tooltip>
+          {!isAiConversation ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onToggleAi}
+                  className={cn(
+                    "flex h-8 w-8 items-center justify-center rounded-lg transition",
+                    aiOpen
+                      ? "bg-signal/15 text-signal"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )}
+                  aria-label="AI assistant"
+                  aria-pressed={aiOpen}
+                >
+                  <Sparkles className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>AI assistant</TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -370,6 +433,12 @@ export function ChatView({
         </div>
       ) : null}
 
+      {isAiConversation && ai && !ai.configured ? (
+        <div className="border-b border-amber-500/20 bg-amber-500/[0.06] px-4 py-1.5 text-center text-[10px] text-amber-500">
+          NEXA AI is offline until the server has an AI provider. Sending is blocked — no fake replies.
+        </div>
+      ) : null}
+
       <div
         ref={scrollRef}
         onScroll={onScroll}
@@ -387,18 +456,32 @@ export function ChatView({
               <div>
                 <h2 className="font-display text-2xl tracking-[-0.02em]">{activeConversation.title}</h2>
                 <p className="mt-1 text-[10.5px] text-muted-foreground">
-                  {activeConversation.type === "DIRECT"
-                    ? "Direct message"
-                    : activeConversation.type === "ROOM"
-                      ? "Expiring room"
-                      : activeConversation.type === "BRANCH"
-                        ? "Side thread"
-                        : "Group conversation"}
+                  {isAiConversation
+                    ? "AI assistant"
+                    : activeConversation.type === "DIRECT"
+                      ? "Direct message"
+                      : activeConversation.type === "ROOM"
+                        ? "Expiring room"
+                        : activeConversation.type === "BRANCH"
+                          ? "Side thread"
+                          : "Group conversation"}
                   {" · "}
                   created {new Date(activeConversation.createdAt).toLocaleDateString()}
                 </p>
               </div>
             </div>
+            {isAiConversation ? (
+              <div className="mt-3 flex items-start gap-2 rounded-lg border border-signal/25 bg-signal/[0.04] px-3.5 py-2.5">
+                <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-signal" />
+                <p className="text-[10.5px] leading-relaxed text-muted-foreground">
+                  {ai?.configured
+                    ? `Replies come from ${ai.provider} (${ai.model}). The assistant can read this thread on the server, and it cannot access your other conversations or attachments. Chats are not end-to-end encrypted.`
+                    : ai
+                      ? "No AI provider is configured on this server yet, so the assistant cannot reply. Messages will be rejected rather than faked."
+                      : "Checking the configured AI provider…"}
+                </p>
+              </div>
+            ) : null}
             {activeConversation.description ? (
               <p className="mt-3 max-w-[70ch] rounded-lg border border-border/60 bg-card/40 px-3.5 py-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
                 {activeConversation.description}
@@ -443,12 +526,45 @@ export function ChatView({
               ))}
             </div>
           ) : activeMessages.length === 0 ? (
-            <EmptyState
-              icon={<MessageSquare className="h-4 w-4" />}
-              title="No messages yet"
-              description="Say hello, share a file, or create a poll. This is a real conversation — invite people if you want company."
-              className="py-16"
-            />
+            isAiConversation ? (
+              <div className="mx-auto max-w-[560px] px-5 py-12 text-center">
+                <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-signal/30 bg-signal/10 text-signal">
+                  <Sparkles className="h-5 w-5" />
+                </span>
+                <h3 className="mt-4 font-display text-2xl tracking-[-0.02em]">
+                  What can I help you with?
+                </h3>
+                <p className="mx-auto mt-2 max-w-[46ch] text-[11.5px] leading-relaxed text-muted-foreground">
+                  Ask a question, draft a message, or think through a problem. This is a real model
+                  call to your workspace&apos;s configured provider — nothing here is canned.
+                </p>
+                <div className="mt-5 grid gap-1.5 text-left sm:grid-cols-2">
+                  {aiPrompts.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      disabled={Boolean(ai && !aiConfigured)}
+                      onClick={() => applyPrompt(prompt)}
+                      className="group flex items-start gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-2.5 text-left text-[10.5px] leading-relaxed text-muted-foreground transition hover:border-signal/30 hover:bg-signal/[0.04] hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Lightbulb className="mt-0.5 h-3 w-3 shrink-0 text-signal/70" />
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-4 text-[9px] leading-relaxed text-muted-foreground/70">
+                  AI can make mistakes. Verify important details. Attachments and polls are disabled
+                  in this thread.
+                </p>
+              </div>
+            ) : (
+              <EmptyState
+                icon={<MessageSquare className="h-4 w-4" />}
+                title="No messages yet"
+                description="Say hello, share a file, or create a poll. This is a real conversation — invite people if you want company."
+                className="py-16"
+              />
+            )
           ) : (
             <div>
               {activeMessages.map((message) => {
@@ -490,6 +606,47 @@ export function ChatView({
               })}
             </div>
           )}
+
+          {isAiConversation && aiThinkingNow ? (
+            <div className="mt-3 flex items-start gap-3 px-5" aria-live="polite">
+              <Avatar name="NEXA AI" src="/nexa-ai.svg" id="nexa-ai" size="md" />
+              <div className="rounded-2xl rounded-tl-md border border-border/70 bg-card/70 px-3.5 py-3 shadow-sm">
+                <div className="flex items-center gap-2 text-[10.5px] text-muted-foreground">
+                  <span className="dot-typing flex gap-0.5">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  NEXA AI is thinking…
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {isAiConversation && aiErrorNow ? (
+            <div
+              className="mx-5 mt-3 flex flex-col gap-2.5 rounded-xl border border-danger/25 bg-danger/[0.05] px-3.5 py-3 sm:flex-row sm:items-center"
+              role="alert"
+            >
+              <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold text-foreground">NEXA AI couldn&apos;t answer</p>
+                <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">{aiErrorNow}</p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                loading={aiThinkingNow}
+                disabled={Boolean(ai && !ai.configured)}
+                onClick={() => {
+                  void retryAiReply(activeConversation.id).catch(() => undefined);
+                }}
+              >
+                <RefreshCw className="h-3 w-3" /> Retry
+              </Button>
+            </div>
+          ) : null}
 
           {activeTyping.length > 0 ? (
             <div className="mt-2 flex items-center gap-2 px-6 pb-2 text-[10px] text-muted-foreground">

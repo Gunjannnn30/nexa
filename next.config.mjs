@@ -1,6 +1,7 @@
 /** @type {import("next").NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  devIndicators: false,
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",

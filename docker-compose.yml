@@ -28,7 +28,7 @@ services:
       timeout: 5s
       retries: 20
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
 
   app:
     build:
@@ -84,7 +84,7 @@ services:
     volumes:
       - nexa_ollama:/root/.ollama
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434"
 
 volumes:
   nexa_pgdata:

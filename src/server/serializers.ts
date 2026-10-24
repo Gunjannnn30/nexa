@@ -11,6 +11,7 @@ export type PublicUserDTO = {
   bio: string | null;
   statusText: string | null;
   initials: string;
+  isBot?: boolean;
   isSelf?: boolean;
 };
 
@@ -95,6 +96,7 @@ export type ConversationDTO = {
   lastMessageAt: string;
   isTemporary: boolean;
   expiresAt: string | null;
+  isAi: boolean;
   members: ConversationMemberDTO[];
   peer: PublicUserDTO | null;
   lastMessage: {
@@ -143,6 +145,7 @@ export function publicUser(user: Partial<User> | null | undefined, viewerId?: st
     bio: user?.bio ?? null,
     statusText: user?.statusText ?? null,
     initials: initials(name),
+    ...(user?.isBot ? { isBot: true } : {}),
     ...(viewerId ? { isSelf: user?.id === viewerId } : {}),
   };
 }
@@ -273,6 +276,8 @@ export function serializeConversation(
     conversation.type === "DIRECT"
       ? (conversation.members ?? []).find((member: any) => member.userId !== viewerId)
       : null;
+  const isAi =
+    conversation.type === "DIRECT" && Boolean(peerMember?.user?.isBot);
   const last = conversation.messages?.[0];
   const title =
     conversation.title ||
@@ -288,6 +293,7 @@ export function serializeConversation(
     lastMessageAt: conversation.lastMessageAt.toISOString(),
     isTemporary: conversation.isTemporary,
     expiresAt: conversation.expiresAt ? conversation.expiresAt.toISOString() : null,
+    isAi,
     members: (conversation.members ?? []).map((member: any) => ({
       id: member.id,
       role: member.role,

@@ -47,6 +47,8 @@ Why one process? Next.js route handlers and Socket.IO need the same session mode
 - `typing` is validated and membership-checked, then fanned out to other members. It is ephemeral and not stored.
 - `read` and `delivered` update `ConversationMember.lastReadAt/lastDeliveredAt` and `MessageReceipt` rows, then emit `receipts:update` to members (respecting the user's read-receipt setting).
 - Message creation/edits/deletes/reactions are emitted by the service layer, so REST and Socket.IO clients see the same stream.
+- AI turns emit `ai:thinking` and `ai:error` to the requesting user only; the assistant reply itself uses the normal `message:new` path.
+- App invite redemption emits `conversation:new` to both the inviter and the new member, and `notification:new` to the inviter.
 - On disconnect, the presence count is decremented and `lastSeenAt` is persisted when the last tab closes.
 
 Events are delivered to user rooms, not socket rooms, so multiple tabs stay consistent. Every payload is the same DTO the REST API returns for that viewer.
@@ -57,15 +59,16 @@ The full model is in `prisma/schema.prisma`. Key choices:
 
 | Model | Role |
 | --- | --- |
-| `User` / `UserSettings` | Identity, profile, preferences, privacy, AI opt-ins |
+| `User` / `UserSettings` | Identity, profile, preferences, privacy, AI opt-ins; `isBot` marks the assistant account |
 | `Session` | SHA-256 hashed opaque tokens with expiry and user agent/IP metadata |
 | `Conversation` | One table for `DIRECT`, `GROUP`, `ROOM`, `BRANCH`; `directKey` dedupes DMs |
 | `ConversationMember` | Role, join time, read/delivery watermarks, per-user archive/favorite/mute |
-| `Message` | Body, type (text/system/poll), reply/forward links, edit/delete timestamps, `clientId` for idempotency |
+| `Message` | Body, type (text/system/poll), reply/forward links, edit/delete timestamps, `clientId` for idempotency, unique `aiSourceMessageId` |
 | `MessageReceipt` | Per-recipient delivered/read timestamps |
 | `Attachment` | Private storage key, MIME/kind/size/dimensions, optional message link |
 | `Reaction`, `Bookmark`, `ConversationPin`, `Poll*`, `MessageMention`, `ContextCard` | Engagement and structured message extensions |
-| `GroupInvite` | Tokenized invite with status and expiry |
+| `GroupInvite` | Tokenized invite to an existing conversation |
+| `AppInvite` / `AppInviteRedemption` | Application invite lifecycle and unique per-user redemption |
 | `Workspace` / `WorkspaceItem` | Tasks, decisions, dates, links, files scoped to a conversation |
 | `Branch` | Side thread bound to a conversation + source message |
 | `AiSummary` / `AiEvidence` | Stored summary plus the exact messages cited |
@@ -124,9 +127,64 @@ route → requireUser → rate limit → Zod
 - `AI_PROVIDER=none` → `503 AI_UNAVAILABLE` with `details.missing`.
 - Provider network failure → `502 AI_UNREACHABLE`; timeout → `504 AI_TIMEOUT`.
 - Empty output → `502 AI_EMPTY_RESPONSE`; malformed JSON → provider error.
-- No AI route mutates messages or account state. Compose returns text to the client.
+- Grounded AI routes do not mutate messages or account state. Compose returns text to the client; extract returns proposed workspace items.
 
 See `docs/security.md` for prompt-injection controls and residual risk.
+
+### NEXA AI assistant thread
+
+The assistant is a separate path from grounded retrieval:
+
+```
+POST /api/conversations/:id/messages  (AI thread only)
+  → assertAiConfigured() before persisting the user message
+  → persist user message
+  → after(): generateAiReply(userId, conversationId, sourceMessageId)
+       → per-conversation promise queue
+       → membership + bot-membership check
+       → source must be a live, non-bot TEXT message
+       → unique aiSourceMessageId check
+       → emit ai:thinking true
+       → last 24 TEXT messages at or before source.createdAt
+       → provider chat (system policy + 6,000-char per-message cap)
+       → sendMessage(asBot, aiSourceMessageId)
+       → emit ai:thinking false
+```
+
+- The bot user is created lazily with username `nexa_ai`, `isBot: true`, a random unusable password, and the NEXA avatar. Bot accounts are excluded from login, discovery, contacts, ordinary conversation creation, group membership changes, and branch creation. The username and email are reserved at registration and cannot be claimed through a profile update; a pre-existing human account with either value makes bot creation fail closed.
+- The AI conversation is created only by `POST /api/ai/conversation`; it is a normal `DIRECT` conversation with a canonical `directKey`, so get-or-create is idempotent. Reply generation requires the exact `directKey` for the requesting user and the bot, not merely any conversation containing a bot.
+- `Message.aiSourceMessageId` is unique. A duplicated send or retry cannot create a second answer; Prisma `P2002` is treated as a benign race loss.
+- The context window is cut at the source message's `createdAt`, so a message that arrives during generation is handled by its own queued turn rather than being folded into the current answer.
+- If the provider is unconfigured, the send is rejected before persistence. If it fails, no assistant message is stored; the client receives `ai:error`.
+- `POST /api/conversations/:id/ai-retry` re-queues the latest unanswered user message, rejects the request if the latest message is already a bot reply, and applies a separate rate limit.
+
+The assistant cannot read other conversations, files, or attachments. It has no tools. Its system prompt is a mitigation for prompt injection; the actual boundary is the service query, which only loads messages from that conversation.
+
+## App invites
+
+Application invites (`AppInvite`) are deliberately separate from conversation invites (`GroupInvite`):
+
+- A token is 18 random bytes encoded as base64url, unique in the database.
+- The link is `${APP_URL}/register?invite=<token>`.
+- Limits: note ≤ 280 characters, `maxUses` 1–50 (default 1), expiry 1–30 days (default 7).
+- Status is computed as `active | expired | revoked | exhausted`; revocation sets `revokedAt`.
+- `GET /api/app-invites/public/:token` returns only inviter name, note, remaining uses, and expiry. It is rate-limited by client IP and never exposes conversation data.
+- `GET /api/app-invites` is owner-scoped and returns recent redemptions. `DELETE /api/app-invites/:id` revokes.
+
+Redemption is transactional and idempotent per user:
+
+```
+validate status inside transaction
+  → reject self-redemption / duplicate redemption
+  → create unique AppInviteRedemption
+  → conditional increment of usedCount (cannot exceed maxUses)
+  → create both Contact directions
+  → reuse or create canonical DIRECT conversation
+  → create system welcome message
+  → notify inviter
+```
+
+Concurrent attempts for the last use are serialized; the loser receives `busy` or `exhausted` rather than over-redeeming. Registration creates the account first, then attempts redemption. An invalid, expired, revoked, or exhausted invite does **not** block account creation; the response reports `accepted: false` with a reason, the client signs the person in, and a one-time workspace warning explains that the connection was not created. A successful redemption returns the canonical conversation ID, and the client opens `/app/<conversationId>` directly.
 
 ## Storage
 
@@ -144,6 +202,7 @@ See `docs/security.md` for prompt-injection controls and residual risk.
 - Loads conversations and the active message page.
 - Applies optimistic sends keyed by `clientId`; reconciles with server DTOs and dedupes socket echoes.
 - Handles socket events, unread counts, document title, notification sound, URL synchronization, and pagination.
+- Loads AI status, lazily creates/opens the assistant thread, applies `ai:thinking`/`ai:error`, and blocks sends locally while the provider is unconfigured.
 - Exposes actions for every mutation; components never call `fetch` directly for messaging.
 
 The shell (`nexa-app.tsx`) owns overlay state (info/AI/notifications), dialogs, theme application, and keyboard shortcuts. On mobile, the sidebar is shown until a conversation is selected, then the chat view takes over.
@@ -158,6 +217,7 @@ The shell (`nexa-app.tsx`) owns overlay state (info/AI/notifications), dialogs, 
 | Soft deletes | Preserves replies and audit context | Scheduled purge job for tombstones and expired rooms |
 | Local disk default | Zero setup | S3-compatible bucket for multi-instance deployments |
 | PostgreSQL FTS + optional vectors | No extra search service | Dedicated search/vector store if corpus grows |
+| Process-local AI queue | Correct for one instance; turns survive only in memory | Durable job queue for multi-instance deployments |
 | Full `node_modules` in Docker builder | Simple, reproducible build | Next standalone output + Prisma engine pruning to slim the image |
 
 The design prioritizes a complete, auditable reference implementation over premature distribution. Every scaling change has a clear seam: services, storage adapter, provider adapter, or the Socket.IO server.
