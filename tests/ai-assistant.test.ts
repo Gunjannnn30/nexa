@@ -299,6 +299,22 @@ describe("NEXA AI assistant", () => {
     });
   });
 
+  it("renders provider markdown as clean chat text", async () => {
+    const person = await createTestUser("ai-markdown");
+    const conversation = await getOrCreateAiConversation(person.id);
+    const source = await sendTestMessage(person.id, conversation.id, "Give me a plan");
+    provider.chat.mockResolvedValueOnce({
+      text: "## Plan\n\n* **First:** invite `ada`\n* Second: ship",
+      provider: "gemini",
+      model: "gemini-2.5-flash",
+    });
+
+    await generateAiReply(person.id, conversation.id, source.id);
+
+    const page = await listMessages(person.id, conversation.id, { limit: 20 });
+    expect(page.messages[1]?.body).toBe("Plan\n\n• First: invite ada\n• Second: ship");
+  });
+
   it("turns provider failures into errors without persisting a fake answer", async () => {
     const person = await createTestUser("ai-failure");
     const conversation = await getOrCreateAiConversation(person.id);

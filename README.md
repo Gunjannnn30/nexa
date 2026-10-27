@@ -16,6 +16,8 @@ There are no demo-only controls, simulated conversations, hardcoded AI answers, 
 
 ![NEXA desktop conversation workspace](docs/screenshots/chat-desktop.webp)
 
+![The NEXA AI assistant answering a launch checklist with a live Gemini reply](docs/screenshots/ai-desktop.webp)
+
 | App sharing | Invite registration |
 | --- | --- |
 | ![Share links in settings](docs/screenshots/settings-share.png) | ![Registering through an invite link](docs/screenshots/invite-register.png) |
@@ -28,6 +30,8 @@ There are no demo-only controls, simulated conversations, hardcoded AI answers, 
   <img src="docs/screenshots/chat-mobile.webp" alt="NEXA conversation on mobile" width="300" />
   &nbsp;&nbsp;&nbsp;
   <img src="docs/screenshots/mobile-settings-share.png" alt="App sharing on mobile" width="300" />
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/ai-mobile.webp" alt="NEXA AI assistant on mobile" width="300" />
 </p>
 
 ---
@@ -434,6 +438,8 @@ AI_TIMEOUT_MS="60000"
 
 The Gemini adapter does not use a separate SDK. It calls the OpenAI-compatible chat endpoint with a bearer key and a timeout. `GET /api/ai/status` returns the active provider, model, `configured` flag, and the exact missing variable names.
 
+The screenshot workspace was verified end to end against live Gemini 2.5 Flash. The assistant screenshots show a real provider reply, not a seeded or hardcoded one. Keys stay in the local `.env` and are never committed.
+
 ### Assistant identity
 
 - The bot is created lazily with username `nexa_ai`, a random unusable password, `isBot: true`, and the NEXA avatar.
@@ -457,6 +463,7 @@ POST /api/conversations/:id/messages
        -> emit ai:thinking true
        -> load last 24 TEXT messages at or before source.createdAt
        -> provider chat with system policy + 6,000-char per-message cap
+       -> normalize markdown into chat-safe plain text
        -> reject empty output
        -> sendMessage(asBot, aiSourceMessageId)
        -> emit ai:thinking false
@@ -469,6 +476,7 @@ Key properties:
 - **Queued turns.** Each conversation has a promise chain, so a second user message waits behind the current generation instead of being dropped. The context is cut at the source message's `createdAt`, so a message that arrives mid-generation is answered by its own turn.
 - **Retry.** `POST /api/conversations/:id/ai-retry` re-queues the latest unanswered user message, rejects if the latest message is already a bot reply, and is rate-limited.
 - **Thinking state.** `ai:thinking` is emitted only after configuration and membership checks; the UI shows a real pending state, not an animation tied to nothing.
+- **Chat-safe output.** Providers often emit Markdown even when asked not to. Before persistence, headings, emphasis markers, fences, link syntax, and `*`/`-` bullets are converted to readable plain text (`•` bullets), so message bubbles never display raw formatting tokens.
 
 ### Assistant system policy
 
@@ -650,7 +658,7 @@ Browser QA is run with a temporary `puppeteer-core` harness under `.qa/` (gitign
 - Settings > Share invite creation, preview, and revoke
 - recipient registration through an invite URL
 - mutual contacts and welcome conversation
-- AI tab opening, composer state, and offline behavior
+- AI tab opening, composer state, live Gemini reply, and offline behavior
 - horizontal overflow at 1440×900 and 390×844
 - dialog bounds, loading states, and scroll position
 - absence of placeholder/demo-only UI
@@ -886,7 +894,7 @@ Coverage includes:
 - upload signature/extension/size rejection and private attachment access
 - HTTP 401s, valid cookie auth, CSRF rejection, unauthorized attachment streaming
 - AI failing closed with `503 AI_UNAVAILABLE` when unconfigured
-- AI assistant queueing, source-aware context, idempotency, retry guards
+- AI assistant queueing, source-aware context, idempotency, retry guards, markdown-to-chat-text normalization
 - app invite lifecycle, public preview safety, registration redemption, idempotent reuse, stale links, concurrency, ownership
 
 ### Live E2E
@@ -903,13 +911,13 @@ The script verifies demo login, group creation between two accounts, realtime de
 
 ### Browser QA
 
-Desktop and mobile browser QA is performed with a temporary Puppeteer harness under `.qa/` (gitignored). It is not part of the app dependency graph. Checks include invite creation/redemption, AI offline states, dialog bounds, scroll behavior, and horizontal overflow at 1440×900 and 390×844.
+Desktop and mobile browser QA is performed with a temporary Puppeteer harness under `.qa/` (gitignored). It is not part of the app dependency graph. Checks include invite creation/redemption, live assistant replies, dialog bounds, scroll behavior, and horizontal overflow at 1440×900 and 390×844.
 
 ### Known test boundaries
 
 - The HTTP retry route is covered through service logic; Next's `after()` throws outside a request scope, so the route itself is not invoked directly in unit tests.
 - Docker assets are unexecuted locally because Docker/Podman are unavailable.
-- Gemini is not exercised by the test suite unless a real key is supplied; provider calls are mocked in AI tests.
+- Gemini is not exercised by the test suite unless a real key is supplied; provider calls are mocked in AI tests. The live Gemini path was verified manually against `/api/health`, the assistant send route, and real browser captures.
 
 ---
 
@@ -1083,6 +1091,6 @@ Invite links created in a running workspace are real database rows. Revoke them 
 
 ## Status
 
-NEXA is a working, self-hostable application with a verified production build, applied migrations, passing integration tests, desktop/mobile browser QA, real invite-based registration, and a real (optional) Gemini-compatible AI path. The repository is at <https://github.com/Gunjannnn30/nexa>.
+NEXA is a working, self-hostable application with a verified production build, applied migrations, passing integration tests, desktop/mobile browser QA, real invite-based registration, and a real Gemini-compatible AI path verified against live Gemini 2.5 Flash. The repository is at <https://github.com/Gunjannnn30/nexa>.
 
-AI remains **off** until a provider key is configured. That is intentional: the application never invents an assistant reply, and every AI surface explains its state instead of pretending to work.
+AI remains **off by default** until a provider key is configured. That is intentional: the application never invents an assistant reply, and every AI surface explains its state instead of pretending to work. No provider key is committed to this repository.
