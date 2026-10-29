@@ -10,6 +10,8 @@ There are no demo-only controls, simulated conversations, hardcoded AI answers, 
 
 `Next.js 15` · `React 19` · `TypeScript` · `Prisma 6` · `PostgreSQL` · `Socket.IO 4` · `Tailwind CSS 3` · `Gemini / Ollama / OpenAI-compatible`
 
+> **Live demo:** [nexa-rwp6.onrender.com](https://nexa-rwp6.onrender.com) — sign in as `ada@nexa.demo` with `DemoPass123!` (all seeded accounts share that password). The reference deployment runs on Render's free plan: the first request after an idle period can take about a minute, and uploaded files do not survive redeploys. The data is fictional; see [Demo data](#demo-data).
+
 ---
 
 ## Screenshots
@@ -768,6 +770,7 @@ Copy [`.env.example`](.env.example) to `.env`. `.env` is gitignored; no real sec
 | `APP_URL` | yes | `http://localhost:3000` | Public origin for cookies, Socket.IO, CSRF, and invite links |
 | `NODE_ENV` | no | `development` | `production` enables Secure cookies |
 | `PORT` | no | `3000` | HTTP port |
+| `HOST` | no | `0.0.0.0` | Bind interface. Docker’s `HOSTNAME` is intentionally ignored because it resolves to loopback inside the container |
 | `SESSION_TTL_DAYS` | no | `30` | Session lifetime |
 | `TEST_DATABASE_URL` | for tests | `nexa_test` | Must differ from `DATABASE_URL` |
 | `AI_PROVIDER` | no | `none` | `none`, `ollama`, `gemini`, `openai` |
@@ -916,7 +919,7 @@ Desktop and mobile browser QA is performed with a temporary Puppeteer harness un
 ### Known test boundaries
 
 - The HTTP retry route is covered through service logic; Next's `after()` throws outside a request scope, so the route itself is not invoked directly in unit tests.
-- Docker assets are unexecuted locally because Docker/Podman are unavailable.
+- Docker assets are unexecuted locally because Docker/Podman are unavailable on this machine; the same `Dockerfile` builds and runs on Render (see [Deployment](#deployment)).
 - Gemini is not exercised by the test suite unless a real key is supplied; provider calls are mocked in AI tests. The live Gemini path was verified manually against `/api/health`, the assistant send route, and real browser captures.
 
 ---
@@ -924,6 +927,8 @@ Desktop and mobile browser QA is performed with a temporary Puppeteer harness un
 ## Deployment
 
 ### Render (recommended for the current architecture)
+
+The reference deployment is live at **https://nexa-rwp6.onrender.com**. It runs the Blueprint below on free plans, so it sleeps when idle.
 
 The repository includes [`render.yaml`](render.yaml), a Render Blueprint that provisions:
 

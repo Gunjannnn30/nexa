@@ -170,6 +170,8 @@ Invite redemption creates a real connection: mutual contacts, a canonical direct
 
 ## Deployment checklist
 
+> The reference deployment at `https://nexa-rwp6.onrender.com` runs `SEED_DEMO=true` with published demo credentials and fictional data. Treat it as a showcase: visitors can sign in as the demo users, so never store real conversations there.
+
 - [ ] Serve exclusively over HTTPS; keep `NODE_ENV=production`.
 - [ ] Set `APP_URL` to the exact public origin (no trailing slash mismatch). On Render it is read from `RENDER_EXTERNAL_URL` automatically. Invite links are derived from this value.
 - [ ] Set `SEED_DEMO=false` on a real deployment, or delete the demo accounts before inviting real users.
