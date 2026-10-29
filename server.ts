@@ -13,7 +13,10 @@ import {
 import { setRealtimeServer, userRoom } from "./src/server/realtime";
 
 const dev = env.NODE_ENV !== "production";
-const hostname = process.env.HOSTNAME || "0.0.0.0";
+// `HOSTNAME` is set by Docker to the container id, which resolves to loopback
+// inside the container and makes the app unreachable behind a proxy. Only an
+// explicit HOST may override the wildcard bind.
+const hostname = process.env.HOST || "0.0.0.0";
 const port = Number(process.env.PORT || 3000);
 
 const app = next({ dev, hostname, port });
